@@ -63,12 +63,12 @@ type Artist struct {
 }
 
 type Game struct {
-	Players []Player
+	Players []*Player
 	CurrentRound Round
 	SongsPlayed []Song
 }
 
-func newGame(players []Player) Game {
+func newGame(players []*Player) Game {
 	return Game{ Players: players, CurrentRound: Round{}}
 }
 
@@ -81,11 +81,11 @@ func (g *Game) restart() {
 }
 
 func (g *Game) join(player *Player) {
-	g.Players = append(g.Players, *player)
+	g.Players = append(g.Players, player)
 }
 
 func (g *Game) leave(player *Player) {
-	tempPlayers := make([]Player, 0)
+	tempPlayers := make([]*Player, 0)
 
 	for _, v := range g.Players {
 		if v.ID != player.ID {
@@ -96,8 +96,8 @@ func (g *Game) leave(player *Player) {
 	g.Players = tempPlayers
 }
 
-func (g *Game) getLeaderBoard() *[]Player {
-	leaderBoard := make([]Player, len(g.Players))
+func (g *Game) getLeaderBoard() *[]*Player {
+	leaderBoard := make([]*Player, len(g.Players))
 	copy(leaderBoard, g.Players)
 
 	sort.SliceStable(leaderBoard, func(i, j int) bool {
@@ -111,7 +111,7 @@ func (g *Game) getPlayerByID(id string) *Player {
 	var foundPlayer Player
 	for _, player := range g.Players {
 		if player.ID.String() == id {
-			foundPlayer = player
+			foundPlayer = *player
 		}
 	}
 	return &foundPlayer
@@ -138,9 +138,9 @@ func (r *Round) countdown() {
 }
 
 type Player struct {
-	ID uuid.UUID
-	Name string
-	Score int
+	ID uuid.UUID `json:"id"`
+	Name string `json:"name"`
+	Score int `json:"score"`
 }
 
 func newPlayer(name string) *Player {
