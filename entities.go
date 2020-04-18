@@ -8,6 +8,32 @@ import (
 	"github.com/satori/go.uuid"
 )
 
+type SocketIOConnectedEvent struct {
+	Game Game `json:"game_status"`
+	Player Player `json:"player"`
+}
+
+type SocketIOSongStartedEvent struct {
+	SongPreviewURI string `json:"preview_uri"`
+}
+
+type SocketIOArtistGuessedEvent struct {
+	ArtistName string `json:"artist_name"`
+	ArtistPictureURI string `json:"artist_picture_uri"`
+}
+
+type SocketIOSongGuessedEvent struct {
+	SongTitle string `json:"song_title"`
+}
+
+type SocketIOUpdateEvent struct {
+	Game Game `json:"game"`
+}
+
+type SocketIOResponseEvent struct {
+	Song Song `json:"song"`
+}
+
 type Playlist struct {
 	Songs []Song `json:"data"`
 	Length int `json:"total"`
@@ -38,15 +64,17 @@ type Artist struct {
 
 type Game struct {
 	Players []Player
-	CurrentRound int
+	CurrentRound Round
+	SongsPlayed []Song
 }
 
 func newGame(players []Player) Game {
-	return Game{ Players: players, CurrentRound: 0}
+	return Game{ Players: players, CurrentRound: Round{}}
 }
 
 func (g *Game) restart() {
-	g.CurrentRound = 1
+	g.CurrentRound = Round{}
+	g.SongsPlayed = make([]Song, 0)
 	for _, v := range g.Players {
 		v.resetScore()
 	}
@@ -87,6 +115,26 @@ func (g *Game) getPlayerByID(id string) *Player {
 		}
 	}
 	return &foundPlayer
+}
+
+func (g *Game) addSongToHistory(song *Song) {
+	g.SongsPlayed = append(g.SongsPlayed, *song)
+}
+
+type Round struct {
+	Nb int
+	Song Song
+	TimeLeft int
+}
+
+func (r *Round) countdown() {
+	for range time.Tick(1 * time.Second) {
+		r.TimeLeft--
+
+		if r.TimeLeft == 0 {
+			break
+		}
+	}
 }
 
 type Player struct {

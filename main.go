@@ -39,12 +39,13 @@ func main() {
 		newPlayer := newPlayer("Agathe")
 		game.join(newPlayer)
 
+		log.Printf("%v joined the game", newPlayer.Name)
 		s.SetContext(newPlayer.ID.String())
 
 		s.Join("gameRoom")
 		s.Join("player_" + newPlayer.ID.String())
 
-		s.Emit("connected", newPlayer.ID.String(), game, currentSong)
+		s.Emit("connected", SocketIOConnectedEvent{Game: game, Player: *newPlayer})
 
 		return nil
 	})
@@ -53,6 +54,7 @@ func main() {
 		playerId := reflect.ValueOf(s.Context()).String()
 		player := game.getPlayerByID(playerId)
 		game.leave(player)
+		log.Printf("%v left the game", player.Name)
 	})
 
 	playlist = *getPlaylist(playlistURI)
@@ -76,30 +78,58 @@ func main() {
 
 func startGame() {
 	for {
-		game.CurrentRound++
+		roundNb := game.CurrentRound.Nb + 1
+		round := Round{
+			Nb:       roundNb,
+			Song:     playlist.getRandomSong(),
+			TimeLeft: 30,
+		}
+		game.CurrentRound = round
+
 		// Send 'song' message with song details
-		currentSong = playlist.getRandomSong()
-		log.Println(currentSong.Preview, currentSong.Title, currentSong.Artist)
-		socketIOServer.BroadcastToRoom("", "gameRoom", "song", currentSong.Preview)
+		log.Println(game.CurrentRound.Song.Preview, game.CurrentRound.Song.Title, game.CurrentRound.Song.Artist)
+		socketIOServer.BroadcastToRoom("", "gameRoom", "songStarted", SocketIOSongStartedEvent{SongPreviewURI: game.CurrentRound.Song.Preview})
 
 		// While waiting, handle 'guess' events
 		socketIOServer.OnEvent("", "guess", func(s socketio.Conn, playerId string, guess string) {
 			player := game.getPlayerByID(playerId)
 
-			songGuessed, artistGuessed := handleGuess(currentSong, guess)
+			songGuessed, artistGuessed := handleGuess(game.CurrentRound.Song, guess)
 
 			if artistGuessed {
 				player.increaseScore(10)
-				socketIOServer.BroadcastToRoom("", "player_" + playerId , "artistGuessed", currentSong.Artist.Name, currentSong.Artist.Picture)
+				socketIOServer.BroadcastToRoom(
+					"",
+					"player_" + playerId ,
+					"artistGuessed",
+					SocketIOArtistGuessedEvent{ArtistName: game.CurrentRound.Song.Artist.Name, ArtistPictureURI: game.CurrentRound.Song.Artist.Picture},
+				)
+				socketIOServer.BroadcastToRoom(
+					"",
+					"gameRoom",
+					"update",
+					SocketIOUpdateEvent{Game: game},
+				)
 			}
 			if songGuessed {
 				player.increaseScore(10)
-				socketIOServer.BroadcastToRoom("", "player_" + playerId , "songGuessed", currentSong.Title)
+				socketIOServer.BroadcastToRoom(
+					"",
+					"player_" + playerId ,
+					"songGuessed",
+					SocketIOSongGuessedEvent{SongTitle: game.CurrentRound.Song.Title},
+				)
+				socketIOServer.BroadcastToRoom(
+					"",
+					"gameRoom",
+					"update",
+					SocketIOUpdateEvent{Game: game},
+				)
 			}
 		})
 
 		// Wait 30 sec (song preview duration)
-		time.Sleep(30 * time.Second)
+		game.CurrentRound.countdown()
 
 		// TODO: Workaround, maybe there is a better to stop listening to "guess" events
 		socketIOServer.OnEvent("", "guess", func(s socketio.Conn, guess string) {
@@ -107,13 +137,20 @@ func startGame() {
 		})
 
 		// After 30sec, send artist + title
-		socketIOServer.BroadcastToRoom("", "gameRoom", "response", currentSong.Artist, currentSong.Title)
+		socketIOServer.BroadcastToRoom(
+			"",
+			"gameRoom",
+			"response",
+			SocketIOResponseEvent{Song: game.CurrentRound.Song},
+		)
+		game.addSongToHistory(&game.CurrentRound.Song)
+
 
 		// Wait 10 sec before running new round
 		time.Sleep(10 * time.Second)
 
 		// TODO: Put nb of round into constant
-		if game.CurrentRound == 10 {
+		if game.CurrentRound.Nb == 10 {
 			endGame()
 		}
 	}
@@ -133,7 +170,10 @@ func getPlaylist(URI string) *Playlist {
 		return nil
 	}
 
-	json.NewDecoder(response.Body).Decode(&playlist)
+	err = json.NewDecoder(response.Body).Decode(&playlist)
+	if err != nil {
+		log.Fatalf("Couldn't decode playlsit JSON. Err: %v", err)
+	}
 
 	if playlist.Next != "" {
 		tempPlaylist := getPlaylist(playlist.Next)
