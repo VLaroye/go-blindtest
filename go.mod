@@ -5,6 +5,7 @@ go 1.14
 require (
 	github.com/gin-gonic/gin v1.6.2
 	github.com/gorilla/websocket v1.4.2 // indirect
+	github.com/hbakhtiyor/strsim v0.0.0-20190107154042-4d2bbb273edf
 	github.com/mlsquires/socketio v0.0.0-20180414171845-169a6f09e624
 	github.com/pschlump/MiscLib v1.0.0 // indirect
 	github.com/pschlump/godebug v1.0.1 // indirect

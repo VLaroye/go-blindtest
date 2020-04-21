@@ -3,21 +3,14 @@ package main
 import (
 	"encoding/json"
 	"github.com/gin-gonic/gin"
-	socketio "github.com/mlsquires/socketio"
+	"github.com/mlsquires/socketio"
 	"log"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
-	"unicode"
-
-	"golang.org/x/text/runes"
-	"golang.org/x/text/transform"
-	"golang.org/x/text/unicode/norm"
 )
 
 const (
-	playlistURI = "https://api.deezer.com/playlist/3775256682/tracks"
+	playlistURI = "https://api.deezer.com/playlist/7530596462/tracks"
 )
 
 var socketIOServer *socketio.Server
@@ -34,61 +27,46 @@ func main() {
 	}
 
 	socketIOServer.On("connection", func(so socketio.Socket) {
-		var player *Player
 		log.Printf("Socket %v connected", so.Id())
 
 		so.Join("gameRoom")
 
-		so.On("connectdd", func(params map[string]string) {
-			playerName := params["player_name"]
-			player = newPlayer(playerName)
-			game.join(player)
+		so.On("join", func(params map[string]string) {
+			playerName, ok := params["player_name"]
 
-			so.Emit("connectcc", SocketIOConnectedEvent{Game: game, Player: *player})
+			if !ok {
+				so.Emit("error", "Field 'player_name' required")
+				return
+			}
 
-			log.Printf("%v joined the game", player.Name)
+			handleJoinEvent(so, playerName)
+		})
+
+		so.On("playerReconnect", func(params map[string]string) {
+			playerID, ok := params["player_id"]
+
+			if !ok {
+				so.Emit("error", "Field 'player_id' required")
+				return
+			}
+
+			handleReconnectEvent(so, playerID)
 		})
 
 		so.On("disconnect", func() {
-			if player != nil {
-				game.leave(player)
-				log.Printf("%v (socket id: %v) left the game", player.Name, so.Id())
-			}
+			log.Printf("Socket id: %v) left the game", so.Id())
 		})
 
 		so.On("guess", func(params map[string]string) {
-			player.increaseScore(10)
-			socketIOServer.BroadcastTo(
-				"gameRoom",
-				"update",
-				SocketIOUpdateEvent{Game: game},
-			)
-			log.Printf("Guess received from: %v (socket id: %v). Guess: %v\n", player.ID, so.Id(), params["guess"])
+			playerID, ok := params["player_id"]
+			playerGuess, ok := params["guess"]
 
-			songGuessed, artistGuessed := handleGuess(game.CurrentRound.Song, params["guess"])
-
-			if artistGuessed {
-				player.increaseScore(10)
-				so.Emit("artistGuessed", SocketIOArtistGuessedEvent{ArtistName: game.CurrentRound.Song.Artist.Name, ArtistPictureURI: game.CurrentRound.Song.Artist.Picture})
-				socketIOServer.BroadcastTo(
-					"gameRoom",
-					"update",
-					SocketIOUpdateEvent{Game: game},
-				)
+			if !ok {
+				so.Emit("error", "Field 'player_id' and 'guess' required")
+				return
 			}
 
-			if songGuessed {
-				player.increaseScore(10)
-				so.Emit(
-					"songGuessed",
-					SocketIOSongGuessedEvent{SongTitle: game.CurrentRound.Song.Title},
-				)
-				socketIOServer.BroadcastTo(
-					"gameRoom",
-					"update",
-					SocketIOUpdateEvent{Game: game},
-				)
-			}
+			handleGuessEvent(so, playerID, playerGuess)
 		})
 	})
 
@@ -104,11 +82,63 @@ func main() {
 	router.GET("game/*any", gin.WrapH(socketIOServer))
 	router.POST("game/*any", gin.WrapH(socketIOServer))
 
-
 	err = router.Run()
 
 	if err != nil {
 		log.Fatalf("Error running app. Err: %v", err)
+	}
+}
+
+func handleJoinEvent(so socketio.Socket, playerName string) {
+	player := newPlayer(playerName)
+	game.join(player)
+
+	so.Emit("joined", SocketIOConnectedEvent{Game: game, Player: *player})
+
+	log.Printf("%v joined the game", player.Name)
+}
+
+func handleReconnectEvent(so socketio.Socket, playerID string) {
+	player, err := game.getPlayerByID(playerID)
+	log.Println(playerID)
+	if err != nil {
+		so.Emit("error", err)
+	}
+	so.Emit("joined", SocketIOConnectedEvent{Game: game, Player: *player})
+}
+
+func handleGuessEvent(so socketio.Socket, playerID, playerGuess string) {
+	player, err := game.getPlayerByID(playerID)
+
+	if err != nil {
+		so.Emit("err", err)
+	}
+
+	guess := newGuess(playerGuess, game.CurrentRound.Song)
+
+	log.Printf("Guess received from: %v. Guess: %v\n", player.ID, playerGuess)
+
+	if guess.artistGuessed() {
+		player.increaseScore(10)
+		so.Emit("artistGuessed", SocketIOArtistGuessedEvent{ArtistName: game.CurrentRound.Song.Artist.Name})
+		socketIOServer.BroadcastTo(
+			"gameRoom",
+			"update",
+			SocketIOUpdateEvent{Game: game},
+		)
+	}
+
+	if guess.songGuessed() {
+		player.increaseScore(10)
+		so.Emit(
+			"songGuessed",
+			SocketIOSongGuessedEvent{SongTitle: game.CurrentRound.Song.Title},
+		)
+		socketIOServer.BroadcastTo(
+			"gameRoom",
+			"update",
+			SocketIOUpdateEvent{Game: game},
+		)
 	}
 }
 
@@ -121,9 +151,8 @@ func startGame() {
 			TimeLeft: 30,
 		}
 		game.CurrentRound = round
-
+		log.Printf("Round %v started. Song: %v - %v", game.CurrentRound.Nb, game.CurrentRound.Song.Title, game.CurrentRound.Song.Artist.Name)
 		// Send 'song' message with song details
-		log.Println(game.CurrentRound.Song.Preview, game.CurrentRound.Song.Title, game.CurrentRound.Song.Artist)
 		socketIOServer.BroadcastTo(
 			"gameRoom",
 			"songStarted",
@@ -141,7 +170,6 @@ func startGame() {
 		)
 		game.addSongToHistory(&game.CurrentRound.Song)
 
-
 		// Wait 10 sec before running new round
 		time.Sleep(10 * time.Second)
 
@@ -153,7 +181,7 @@ func startGame() {
 }
 
 func endGame() {
-	socketIOServer.BroadcastTo("gameRoom","gameFinished", game.getLeaderBoard())
+	socketIOServer.BroadcastTo("gameRoom", "gameFinished", game.getLeaderBoard())
 	game.restart()
 }
 
@@ -193,74 +221,4 @@ func filterSongsWithoutPreview(songs *[]Song) *[]Song {
 	}
 
 	return &tempSlice
-}
-
-func handleGuessEvent(so socketio.Socket, playerId, guess string) {
-	player := game.getPlayerByID(playerId)
-
-	songGuessed, artistGuessed := handleGuess(game.CurrentRound.Song, guess)
-
-	if artistGuessed {
-		player.increaseScore(10)
-		so.Emit("artistGuessed", SocketIOArtistGuessedEvent{ArtistName: game.CurrentRound.Song.Artist.Name, ArtistPictureURI: game.CurrentRound.Song.Artist.Picture})
-		socketIOServer.BroadcastTo(
-			"gameRoom",
-			"update",
-			SocketIOUpdateEvent{Game: game},
-		)
-	}
-
-	if songGuessed {
-		player.increaseScore(10)
-		so.Emit(
-			"songGuessed",
-			SocketIOSongGuessedEvent{SongTitle: game.CurrentRound.Song.Title},
-		)
-		socketIOServer.BroadcastTo(
-			"gameRoom",
-			"update",
-			SocketIOUpdateEvent{Game: game},
-		)
-	}
-}
-
-func handleGuess(song Song, guess string) (bool, bool){
-	sanitizedGuess := sanitizeString(guess)
-	sanitizedSongTitle := sanitizeString(song.Title)
-	sanitizedSongArtist := sanitizeString(song.Artist.Name)
-
-	return sanitizedGuess == sanitizedSongTitle, sanitizedGuess == sanitizedSongArtist
-}
-
-func sanitizeString(s string) string {
-	sanitizedString := s
-	// Lowercase
-	sanitizedString = strings.ToLower(sanitizedString)
-	// Remove spaces
-	sanitizedString = strings.ReplaceAll(sanitizedString, " ", "")
-	// Remove accents
-	sanitizedString = removeAccents(sanitizedString)
-	// Remove special chars
-	sanitizedString = removeNonAlphanumericChars(sanitizedString)
-
-	return sanitizedString
-}
-
-
-func removeAccents(s string) string  {
-	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
-	output, _, e := transform.String(t, s)
-	if e != nil {
-		panic(e)
-	}
-	return output
-}
-
-func removeNonAlphanumericChars(s string) string {
-	// Make a Regex to say we only want letters and numbers
-	reg, err := regexp.Compile("[^a-zA-Z0-9]+")
-	if err != nil {
-		log.Fatal(err)
-	}
-	return reg.ReplaceAllString(s, "")
 }

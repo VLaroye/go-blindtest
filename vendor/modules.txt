@@ -19,6 +19,9 @@ github.com/golang/protobuf/proto
 # github.com/gorilla/websocket v1.4.2
 ## explicit
 github.com/gorilla/websocket
+# github.com/hbakhtiyor/strsim v0.0.0-20190107154042-4d2bbb273edf
+## explicit
+github.com/hbakhtiyor/strsim
 # github.com/json-iterator/go v1.1.9
 github.com/json-iterator/go
 # github.com/konsorten/go-windows-terminal-sequences v1.0.1

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"github.com/hbakhtiyor/strsim"
 	"math/rand"
 	"sort"
 	"time"
@@ -9,7 +11,7 @@ import (
 )
 
 type SocketIOConnectedEvent struct {
-	Game Game `json:"game_status"`
+	Game   Game   `json:"game_status"`
 	Player Player `json:"player"`
 }
 
@@ -18,7 +20,7 @@ type SocketIOSongStartedEvent struct {
 }
 
 type SocketIOArtistGuessedEvent struct {
-	ArtistName string `json:"artist_name"`
+	ArtistName       string `json:"artist_name"`
 	ArtistPictureURI string `json:"artist_picture_uri"`
 }
 
@@ -35,8 +37,8 @@ type SocketIOResponseEvent struct {
 }
 
 type Playlist struct {
-	Songs []Song `json:"data"`
-	Length int `json:"total"`
+	Songs  []Song `json:"data"`
+	Length int    `json:"total"`
 	// TODO: Think about other struct, 'next' is not meaningful here
 	Next string `json:"next"`
 }
@@ -51,25 +53,25 @@ func (p *Playlist) getRandomSong() Song {
 }
 
 type Song struct {
-	Id int `json:"id"`
+	Id      int    `json:"id"`
 	Preview string `json:"preview"`
-	Artist Artist `json:"artist"`
-	Title string `json:"title_short"`
+	Artist  Artist `json:"artist"`
+	Title   string `json:"title_short"`
 }
 
 type Artist struct {
-	Name string `json:"name"`
+	Name    string `json:"name"`
 	Picture string `json:"picture"`
 }
 
 type Game struct {
-	Players []*Player
+	Players      []*Player
 	CurrentRound Round
-	SongsPlayed []Song
+	SongsPlayed  []Song
 }
 
 func newGame(players []*Player) Game {
-	return Game{ Players: players, CurrentRound: Round{}}
+	return Game{Players: players, CurrentRound: Round{}}
 }
 
 func (g *Game) restart() {
@@ -107,14 +109,20 @@ func (g *Game) getLeaderBoard() *[]*Player {
 	return &leaderBoard
 }
 
-func (g *Game) getPlayerByID(id string) *Player {
-	var foundPlayer Player
+func (g *Game) getPlayerByID(id string) (*Player, error) {
+	var foundPlayer *Player
+
 	for _, player := range g.Players {
 		if player.ID.String() == id {
-			foundPlayer = *player
+			foundPlayer = player
 		}
 	}
-	return &foundPlayer
+
+	if foundPlayer == nil {
+		return nil, errors.New("Player not found")
+	}
+
+	return foundPlayer, nil
 }
 
 func (g *Game) addSongToHistory(song *Song) {
@@ -122,8 +130,8 @@ func (g *Game) addSongToHistory(song *Song) {
 }
 
 type Round struct {
-	Nb int
-	Song Song
+	Nb       int
+	Song     Song
 	TimeLeft int
 }
 
@@ -138,15 +146,15 @@ func (r *Round) countdown() {
 }
 
 type Player struct {
-	ID uuid.UUID `json:"id"`
-	Name string `json:"name"`
-	Score int `json:"score"`
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Score int       `json:"score"`
 }
 
 func newPlayer(name string) *Player {
 	return &Player{
-		ID: uuid.Must(uuid.NewV4(), nil),
-		Name: name,
+		ID:    uuid.Must(uuid.NewV4(), nil),
+		Name:  name,
 		Score: 0,
 	}
 }
@@ -159,3 +167,22 @@ func (p *Player) increaseScore(points int) {
 	p.Score += points
 }
 
+type Guess struct {
+	Guess       string
+	CurrentSong Song
+}
+
+func newGuess(guess string, currentSong Song) *Guess {
+	return &Guess{
+		Guess:       sanitizeString(guess),
+		CurrentSong: currentSong,
+	}
+}
+
+func (g *Guess) songGuessed() bool {
+	return strsim.Compare(g.Guess, sanitizeString(g.CurrentSong.Title)) > 0.8
+}
+
+func (g *Guess) artistGuessed() bool {
+	return strsim.Compare(g.Guess, sanitizeString(g.CurrentSong.Artist.Name)) > 0.8
+}
